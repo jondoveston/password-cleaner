@@ -1,0 +1,68 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  APP: password-cleaner
+  VERSION: "dev"
+  COMMIT: "commit"
+  # sh: "git rev-parse HEAD"
+  DATE:
+    sh: 'date -u +"%Y-%m-%dT%H:%M:%SZ"'
+  BUILT_BY:
+    sh: "whoami"
+
+env:
+  VERSION: "{{ .VERSION }}"
+  COMMIT: "{{ .COMMIT }}"
+  DATE: "{{ .DATE }}"
+  BUILT_BY: "{{ .BUILT_BY }}"
+  IMAGE: "{{ .APP }}"
+  TAG: "{{ .VERSION }}"
+
+tasks:
+  default:
+    desc: Build the tool
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the tool
+    cmd: |
+      go build \
+        -ldflags=" \
+        -s -w \
+        -X main.version=$VERSION \
+        -X main.commit=$COMMIT \
+        -X main.date=$DATE \
+        -X main.builtBy=$BUILT_BY \
+        " -v -o {{ .APP }} .
+    sources:
+      - ./**/*.go
+      - ./go.mod
+      - ./go.sum
+    generates:
+      - ./{{ .APP }}
+
+  install:
+    desc: Install the tool to ~/.local/bin
+    deps: [build]
+    cmds:
+      - cp ./{{ .APP }} ~/.local/bin
+      - "chmod +x ~/.local/bin/{{ .APP }}"
+
+  clean:
+    desc: Clean up the build
+    cmd: rm -f {{ .APP }}
+
+  fmt:
+    desc: Run go format
+    cmd: gofmt -s -w .
+
+  lint:
+    desc: Run golangci-lint
+    cmd: golangci-lint run
+
+  test:
+    desc: Run the go tests
+    cmd: go test
