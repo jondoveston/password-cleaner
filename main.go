@@ -83,7 +83,7 @@ func loadHashes(filepath string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	hashes := make(map[string]bool)
 	scanner := bufio.NewScanner(file)
