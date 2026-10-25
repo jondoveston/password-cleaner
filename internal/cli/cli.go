@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -41,6 +42,8 @@ type app struct {
 	// line from the terminal without echoing it. Tests replace both.
 	isTTY  func(r io.Reader) bool
 	prompt func(label string) (string, error)
+	// now supplies the date written into comments.
+	now func() time.Time
 
 	filter filterFlags
 	add    addFlags
@@ -48,7 +51,7 @@ type app struct {
 }
 
 func newApp(stdin io.Reader, stdout, stderr io.Writer) *app {
-	a := &app{stdin: stdin, stdout: stdout, stderr: stderr, isTTY: isTerminal}
+	a := &app{stdin: stdin, stdout: stdout, stderr: stderr, isTTY: isTerminal, now: time.Now}
 	a.prompt = func(label string) (string, error) {
 		_, _ = fmt.Fprint(stderr, label)
 		b, err := term.ReadPassword(int(os.Stdin.Fd()))

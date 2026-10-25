@@ -92,10 +92,14 @@ The hash file is chosen from, in order: `--hash-file`,
 (on macOS `~/.config` if it exists, otherwise `~/Library/Application Support`).
 
 ```
-# comments and blank lines are ignored
-8:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8  # label
+# a comment on its own line is ignored, like blank lines
+8:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8  # bank, added 2026-10-25
 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
 ```
+
+Text after a `#` on a hash line is a comment that reminds you which secret it
+is. It has no effect on matching. `add` writes one on every line it creates,
+made of your `--comment` (if any) and the date: `bank, added 2026-10-25`.
 
 The number before the colon is the secret's length in bytes. With it, only
 substrings of the lengths present in the file are hashed, which is dramatically
@@ -132,7 +136,7 @@ and wrote matching lines to stderr. Now: use `add` or `hash` instead, and
 `--on-match stderr` for the old behaviour. Existing hash files keep working as
 they are. To get length-tagged lines and the faster matching, run `add` again
 with the same secrets: a bare hash that is already in the file is rewritten
-in place to include the length (keeping its label, unless you give a new
+in place to include the length (keeping its comment, unless you give a new
 `--comment`), and everything else in the file is left alone. Secrets that are
 not in the file yet are added as usual.
 

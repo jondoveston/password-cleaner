@@ -3,7 +3,7 @@
 // Each line of a hash file is one of:
 //
 //	# a comment
-//	12:9f86d081...0a08  # optional label     length-tagged (preferred)
+//	12:9f86d081...0a08  # optional comment    length-tagged (preferred)
 //	9f86d081...0a08                          bare hash (length unknown)
 //
 // The number before the colon is the length of the secret in bytes. It lets
@@ -43,8 +43,8 @@ type Entry struct {
 	Sum Sum
 	// Length is the length of the secret in bytes, or 0 if unknown.
 	Length int
-	// Label is free text kept after a "#" on the line.
-	Label string
+	// Comment is free text kept after a "#" on the line.
+	Comment string
 }
 
 // New returns the length-tagged entry for secret.
@@ -61,9 +61,9 @@ func (e Entry) String() string {
 		sb.WriteByte(':')
 	}
 	sb.WriteString(e.Sum.String())
-	if e.Label != "" {
+	if e.Comment != "" {
 		sb.WriteString("  # ")
-		sb.WriteString(e.Label)
+		sb.WriteString(e.Comment)
 	}
 	return sb.String()
 }
@@ -76,9 +76,9 @@ func ParseLine(line string) (e Entry, ok bool, err error) {
 	if line == "" || line[0] == '#' {
 		return Entry{}, false, nil
 	}
-	body, label, _ := strings.Cut(line, "#")
+	body, comment, _ := strings.Cut(line, "#")
 	body = strings.TrimSpace(body)
-	e.Label = strings.TrimSpace(label)
+	e.Comment = strings.TrimSpace(comment)
 
 	if strings.ContainsAny(body, " \t") {
 		return Entry{}, false, errors.New("unexpected text after the hash")
@@ -276,9 +276,11 @@ type AppendResult struct {
 //
 // An entry whose hash is already in the file is skipped, with one exception:
 // if the existing line is a bare hash and the entry knows its length, that
-// line is rewritten in place to the length-tagged form. It keeps its label
-// unless the entry has one. Every other line is left exactly as it was.
-func Append(path string, entries []Entry) (res AppendResult, err error) {
+// line is rewritten in place to the length-tagged form. The line keeps its
+// own comment; if it had none it takes the entry's. With replaceComment the
+// entry's comment replaces the line's whenever the entry has one. Every other
+// line is left exactly as it was.
+func Append(path string, entries []Entry, replaceComment bool) (res AppendResult, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return res, err
 	}
@@ -315,9 +317,9 @@ func Append(path string, entries []Entry) (res AppendResult, err error) {
 					raw, cr = strings.TrimSuffix(raw, "\r"), "\r"
 				}
 				old, _, _ := ParseLine(raw)
-				up := Entry{Sum: e.Sum, Length: e.Length, Label: old.Label}
-				if e.Label != "" {
-					up.Label = e.Label
+				up := Entry{Sum: e.Sum, Length: e.Length, Comment: old.Comment}
+				if e.Comment != "" && (replaceComment || old.Comment == "") {
+					up.Comment = e.Comment
 				}
 				lines[i] = up.String() + cr
 			}

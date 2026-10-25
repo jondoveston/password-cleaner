@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jondoveston/password-cleaner/internal/hashes"
 )
@@ -64,6 +65,7 @@ func (h *harness) run(stdin string, args ...string) (stdout, stderr string, code
 		h.prompts = h.prompts[1:]
 		return p, nil
 	}
+	a.now = func() time.Time { return time.Date(2026, 10, 25, 9, 0, 0, 0, time.Local) }
 	code = a.execute(testInfo, args)
 	return out.String(), errOut.String(), code
 }
@@ -325,7 +327,7 @@ func TestAddFromPipe(t *testing.T) {
 	if strings.Contains(string(data), "hunter22") || strings.Contains(string(data), "horse") {
 		t.Error("the secret was written in the clear")
 	}
-	for _, want := range []string{hashes.New("hunter22").Sum.String(), "13:" + hashes.New("correct horse").Sum.String(), "# test"} {
+	for _, want := range []string{hashes.New("hunter22").Sum.String(), "13:" + hashes.New("correct horse").Sum.String(), "# test, added 2026-10-25"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("hash file lacks %q:\n%s", want, data)
 		}
@@ -369,6 +371,46 @@ func TestAddUpgradesBareHashes(t *testing.T) {
 	out, _, _ = h.run("hunter22\n", "add", "-f", file)
 	if !strings.Contains(out, "added 0 hash(es)") || !strings.Contains(out, "1 already present") || strings.Contains(out, "upgraded") {
 		t.Errorf("second run: %q", out)
+	}
+}
+
+func TestAddStampsTheDate(t *testing.T) {
+	h := newHarness(t)
+	file := filepath.Join(t.TempDir(), "h.txt")
+	h.run("hunter22\n", "add", "-f", file)
+	h.run("correct horse\n", "add", "-f", file, "--comment", "my bank")
+	data, _ := os.ReadFile(file)
+	for _, want := range []string{
+		hashes.New("hunter22").Sum.String() + "  # added 2026-10-25\n",
+		hashes.New("correct horse").Sum.String() + "  # my bank, added 2026-10-25\n",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("missing %q in:\n%s", want, data)
+		}
+	}
+}
+
+func TestAddUpgradeCommentRules(t *testing.T) {
+	h := newHarness(t)
+	bare := hashes.New("hunter22").Sum.String()
+	file := filepath.Join(t.TempDir(), "h.txt")
+
+	_ = os.WriteFile(file, []byte(bare+"  # work\n"), 0o600)
+	h.run("hunter22\n", "add", "-f", file)
+	if data, _ := os.ReadFile(file); string(data) != "8:"+bare+"  # work\n" {
+		t.Errorf("no --comment keeps the old one: %q", data)
+	}
+
+	_ = os.WriteFile(file, []byte(bare+"  # work\n"), 0o600)
+	h.run("hunter22\n", "add", "-f", file, "--comment", "personal")
+	if data, _ := os.ReadFile(file); string(data) != "8:"+bare+"  # personal, added 2026-10-25\n" {
+		t.Errorf("--comment replaces it: %q", data)
+	}
+
+	_ = os.WriteFile(file, []byte(bare+"\n"), 0o600)
+	h.run("hunter22\n", "add", "-f", file)
+	if data, _ := os.ReadFile(file); string(data) != "8:"+bare+"  # added 2026-10-25\n" {
+		t.Errorf("a missing comment is filled in: %q", data)
 	}
 }
 
@@ -468,7 +510,7 @@ func TestAddErrors(t *testing.T) {
 func TestHash(t *testing.T) {
 	h := newHarness(t)
 	out, _, code := h.run("password\n", "hash", "--comment", "bank")
-	want := "8:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8  # bank\n"
+	want := "8:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8  # bank, added 2026-10-25\n"
 	if code != 0 || out != want {
 		t.Errorf("out=%q code=%d", out, code)
 	}

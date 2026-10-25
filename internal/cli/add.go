@@ -27,7 +27,7 @@ type secretFlags struct {
 
 func (s *secretFlags) register(cmd *cobra.Command) {
 	fl := cmd.Flags()
-	fl.StringVar(&s.comment, "comment", "", "label stored next to the hash, to remind you what it was")
+	fl.StringVar(&s.comment, "comment", "", "comment stored next to the hash, to remind you what it was (the date is added to it)")
 	fl.BoolVar(&s.force, "force", false,
 		fmt.Sprintf("accept secrets shorter than %d characters", minSecretLen))
 }
@@ -88,7 +88,7 @@ func (a *app) runAdd(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := hashes.Append(paths[0], entries)
+	res, err := hashes.Append(paths[0], entries, a.add.comment != "")
 	if err != nil {
 		return err
 	}
@@ -119,6 +119,16 @@ func (a *app) runHash(*cobra.Command, []string) error {
 		}
 	}
 	return nil
+}
+
+// stamp appends the date to a comment, or makes one if there is none:
+// "bank, added 2026-10-25" or "added 2026-10-25".
+func (a *app) stamp(comment string) string {
+	added := "added " + a.now().Format("2006-01-02")
+	if comment == "" {
+		return added
+	}
+	return comment + ", " + added
 }
 
 // readEntries reads secrets, checks them and turns them into hash entries.
@@ -153,7 +163,7 @@ func (a *app) readEntries(f secretFlags) ([]hashes.Entry, error) {
 	entries := make([]hashes.Entry, len(secrets))
 	for i, s := range secrets {
 		entries[i] = hashes.New(s)
-		entries[i].Label = f.comment
+		entries[i].Comment = a.stamp(f.comment)
 	}
 	return entries, nil
 }

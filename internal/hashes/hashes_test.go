@@ -22,7 +22,7 @@ func TestHash(t *testing.T) {
 
 func TestEntryRoundTrip(t *testing.T) {
 	e := New("password")
-	e.Label = "my bank"
+	e.Comment = "my bank"
 	line := e.String()
 	if want := "8:" + passwordSum + "  # my bank"; line != want {
 		t.Fatalf("got %q, want %q", line, want)
@@ -40,7 +40,7 @@ func TestParseLine(t *testing.T) {
 		line    string
 		ok      bool
 		length  int
-		label   string
+		comment string
 		wantErr string
 	}{
 		{name: "blank", line: "   "},
@@ -49,8 +49,8 @@ func TestParseLine(t *testing.T) {
 		{name: "bare with spaces around", line: "  " + passwordSum + "\t", ok: true},
 		{name: "upper case", line: upper, ok: true},
 		{name: "tagged", line: "8:" + passwordSum, ok: true, length: 8},
-		{name: "label", line: "8:" + passwordSum + " # a # b", ok: true, length: 8, label: "a # b"},
-		{name: "bare label", line: passwordSum + "# x", ok: true, label: "x"},
+		{name: "comment", line: "8:" + passwordSum + " # a # b", ok: true, length: 8, comment: "a # b"},
+		{name: "bare comment", line: passwordSum + "# x", ok: true, comment: "x"},
 		{name: "short", line: "abc123", wantErr: "expected 64 hex"},
 		{name: "not hex", line: strings.Repeat("z", 64), wantErr: "not valid hex"},
 		{name: "zero length", line: "0:" + passwordSum, wantErr: "positive number"},
@@ -76,7 +76,7 @@ func TestParseLine(t *testing.T) {
 			if ok != tc.ok {
 				t.Fatalf("ok = %v", ok)
 			}
-			if ok && (e.Length != tc.length || e.Label != tc.label || e.Sum.String() != passwordSum) {
+			if ok && (e.Length != tc.length || e.Comment != tc.comment || e.Sum.String() != passwordSum) {
 				t.Errorf("got %+v", e)
 			}
 		})
@@ -150,15 +150,15 @@ func TestLoadFile(t *testing.T) {
 func TestAppend(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "dir", "hashes.txt")
 
-	res, err := Append(path, []Entry{New("password"), New("password"), New("hunter22")})
+	res, err := Append(path, []Entry{New("password"), New("password"), New("hunter22")}, false)
 	if err != nil || res != (AppendResult{Added: 2, Skipped: 1}) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	res, err = Append(path, []Entry{New("hunter22"), New("another one")})
+	res, err = Append(path, []Entry{New("hunter22"), New("another one")}, false)
 	if err != nil || res != (AppendResult{Added: 1, Skipped: 1}) {
 		t.Fatalf("second append: res=%+v err=%v", res, err)
 	}
-	res, err = Append(path, []Entry{New("password")})
+	res, err = Append(path, []Entry{New("password")}, false)
 	if err != nil || res != (AppendResult{Skipped: 1}) {
 		t.Fatalf("all duplicates: res=%+v err=%v", res, err)
 	}
@@ -191,7 +191,7 @@ func TestAppendAddsMissingNewline(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# no trailing newline"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Append(path, []Entry{New("password")}); err != nil {
+	if _, err := Append(path, []Entry{New("password")}, false); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -211,7 +211,7 @@ func TestAppendUpgradesBareHash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Append(path, []Entry{New("password"), New("a new secret")})
+	res, err := Append(path, []Entry{New("password"), New("a new secret")}, false)
 	if err != nil || res != (AppendResult{Added: 1, Upgraded: 1}) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -235,36 +235,43 @@ func TestAppendUpgradesBareHash(t *testing.T) {
 	}
 
 	// A second run finds it already upgraded.
-	res, err = Append(path, []Entry{New("password")})
+	res, err = Append(path, []Entry{New("password")}, false)
 	if err != nil || res != (AppendResult{Skipped: 1}) {
 		t.Errorf("second run: res=%+v err=%v", res, err)
 	}
 }
 
-func TestAppendUpgradeLabel(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hashes.txt")
-	write := func() {
-		if err := os.WriteFile(path, []byte(passwordSum+"  # old\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+func TestAppendUpgradeComment(t *testing.T) {
+	tests := []struct {
+		name    string
+		before  string // the line in the file
+		comment string // the entry's comment
+		replace bool
+		want    string
+	}{
+		{"keeps the existing comment", "  # old", "", false, "  # old"},
+		{"keeps it even when the entry has one", "  # old", "new", false, "  # old"},
+		{"replaces it when asked", "  # old", "new", true, "  # new"},
+		{"keeps it if the entry has none, even when replacing", "  # old", "", true, "  # old"},
+		{"fills in a missing comment", "", "new", false, "  # new"},
+		{"stays bare of comments if neither has one", "", "", false, ""},
 	}
-
-	write()
-	if _, err := Append(path, []Entry{New("password")}); err != nil {
-		t.Fatal(err)
-	}
-	if data, _ := os.ReadFile(path); string(data) != "8:"+passwordSum+"  # old\n" {
-		t.Errorf("label should be kept: %q", data)
-	}
-
-	write()
-	e := New("password")
-	e.Label = "new"
-	if _, err := Append(path, []Entry{e}); err != nil {
-		t.Fatal(err)
-	}
-	if data, _ := os.ReadFile(path); string(data) != "8:"+passwordSum+"  # new\n" {
-		t.Errorf("label should be replaced: %q", data)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hashes.txt")
+			if err := os.WriteFile(path, []byte(passwordSum+tc.before+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e := New("password")
+			e.Comment = tc.comment
+			if _, err := Append(path, []Entry{e}, tc.replace); err != nil {
+				t.Fatal(err)
+			}
+			want := "8:" + passwordSum + tc.want + "\n"
+			if data, _ := os.ReadFile(path); string(data) != want {
+				t.Errorf("got %q, want %q", data, want)
+			}
+		})
 	}
 }
 
@@ -273,7 +280,7 @@ func TestAppendUpgradeKeepsCRLFAndMissingNewline(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# c\r\n"+passwordSum), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Append(path, []Entry{New("password"), New("hunter22")}); err != nil {
+	if _, err := Append(path, []Entry{New("password"), New("hunter22")}, false); err != nil {
 		t.Fatal(err)
 	}
 	want := "# c\r\n8:" + passwordSum + "\n8:" + hunterSum() + "\n"
@@ -295,7 +302,7 @@ func TestAppendUpgradeThroughSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Append(link, []Entry{New("password")}); err != nil {
+	if _, err := Append(link, []Entry{New("password")}, false); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := os.Lstat(link); info.Mode()&os.ModeSymlink == 0 {
@@ -314,7 +321,7 @@ func TestAppendBareEntryDoesNotUpgrade(t *testing.T) {
 	// An entry with no length has nothing to upgrade to.
 	e := New("password")
 	e.Length = 0
-	res, err := Append(path, []Entry{e})
+	res, err := Append(path, []Entry{e}, false)
 	if err != nil || res != (AppendResult{Skipped: 1}) {
 		t.Errorf("res=%+v err=%v", res, err)
 	}
