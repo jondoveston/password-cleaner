@@ -22,6 +22,7 @@ type harness struct {
 	config  string // XDG_CONFIG_HOME
 	tty     bool
 	prompts []string
+	env     []string // the fake environment variables
 }
 
 func newHarness(t *testing.T) *harness {
@@ -65,6 +66,7 @@ func (h *harness) run(stdin string, args ...string) (stdout, stderr string, code
 		h.prompts = h.prompts[1:]
 		return p, nil
 	}
+	a.environFn = func() []string { return h.env }
 	a.now = func() time.Time { return time.Date(2026, 10, 25, 9, 0, 0, 0, time.Local) }
 	code = a.execute(testInfo, args)
 	return out.String(), errOut.String(), code
@@ -498,12 +500,24 @@ func TestAddErrors(t *testing.T) {
 	if _, errOut, code := h.run("hunter22\n", "add", "--comment", "a\nb"); code != 2 || !strings.Contains(errOut, "single line") {
 		t.Errorf("comment: err=%q code=%d", errOut, code)
 	}
-	t.Setenv(hashes.EnvVar, "/a"+string(os.PathListSeparator)+"/b")
-	if _, errOut, code := h.run("hunter22\n", "add"); code != 2 || !strings.Contains(errOut, "choose one with --hash-file") {
-		t.Errorf("several env files: err=%q code=%d", errOut, code)
-	}
 	if _, _, code := h.run("hunter22\n", "add", "extra"); code != 2 {
 		t.Errorf("positional arg: code=%d", code)
+	}
+}
+
+func TestAddWritesToTheFirstOfSeveralHashFiles(t *testing.T) {
+	h := newHarness(t)
+	dir := t.TempDir()
+	first, second := filepath.Join(dir, "first.txt"), filepath.Join(dir, "second.txt")
+	t.Setenv(hashes.EnvVar, first+string(os.PathListSeparator)+second)
+	if _, _, code := h.run("hunter22\n", "add"); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if _, err := os.Stat(first); err != nil {
+		t.Error(err)
+	}
+	if _, err := os.Stat(second); err == nil {
+		t.Error("the second file should not have been written")
 	}
 }
 

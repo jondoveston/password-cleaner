@@ -13,6 +13,8 @@ import (
 )
 
 type filterFlags struct {
+	envOpts
+	env         bool
 	hashFiles   []string
 	onMatch     string
 	redact      bool
@@ -36,6 +38,10 @@ func (f *filterFlags) register(cmd *cobra.Command) {
 	fl.IntVar(&f.minLength, "min-length", 8,
 		"shortest substring to try for bare hashes (hashes without a length prefix)")
 	fl.BoolVarP(&f.verbose, "verbose", "v", false, "report which hash files are used and what was removed")
+	fl.BoolVar(&f.env, "env", false,
+		"also treat the values of secret-looking environment variables (TOKEN, SECRET, PASSWORD, ...) as secrets;\n"+
+			"they are used in memory only and never saved")
+	f.envOpts.register(fl)
 	cmd.MarkFlagsMutuallyExclusive("check", "on-match", "redact")
 	cmd.MarkFlagsMutuallyExclusive("on-match", "redact")
 }
@@ -71,6 +77,11 @@ func (a *app) runFilter(cmd *cobra.Command, files []string) error {
 	set, err := a.loadSet()
 	if err != nil {
 		return err
+	}
+	if f.env {
+		if err := a.addEnvSecrets(set); err != nil {
+			return err
+		}
 	}
 	switch {
 	case set.Len() == 0 && f.check:
@@ -148,6 +159,13 @@ func (a *app) loadSet() (*hashes.Set, error) {
 	for _, p := range paths {
 		n, err := set.LoadFile(p, func(msg string) { a.warnf("%s", msg) })
 		if errors.Is(err, fs.ErrNotExist) {
+			if isDefault && a.filter.env {
+				// Environment variables can be the only source of secrets.
+				if a.filter.verbose {
+					_, _ = fmt.Fprintf(a.stderr, "password-cleaner: no hash file at %s; using environment variables only\n", p)
+				}
+				continue
+			}
 			if isDefault {
 				return nil, fmt.Errorf("no hash file at %s\n\n"+
 					"Add a secret to create it:\n  password-cleaner add\n\n"+

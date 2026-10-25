@@ -55,6 +55,8 @@ brew install jondoveston/tap/password-cleaner
 password-cleaner [flags] [file...]   filter files, or stdin if none (or "-")
 password-cleaner add [flags]         add secrets to the hash file
 password-cleaner hash [flags]        print the hash-file line for a secret
+password-cleaner env list            show environment variables that look like secrets
+password-cleaner env add [NAME...]   add their values to the hash file, asking first
 ```
 
 Run any command with `--help` for the full text.
@@ -72,6 +74,7 @@ original endings (LF or CRLF), and there is no limit on line length.
 | `--replacement TEXT`  | what `--redact` writes instead of a secret (default `[REDACTED]`)   |
 | `-c, --check`         | print `FILE:LINE` for each match, filter nothing                    |
 | `--min-length N`      | shortest substring tried for bare hashes (default 8)                |
+| `--env`               | also use secret-looking environment variables (see below)           |
 | `-v, --verbose`       | say which hash files were used and how many lines were removed      |
 
 `--on-match stderr` writes the **whole line, secret included,** to standard
@@ -123,11 +126,74 @@ When standard input is not a terminal, each non-empty line is a secret. They
 are deliberately not accepted as arguments, so they never reach your shell
 history or the process list. `add` creates the file with mode 0600 (and its
 directory with 0700) and skips hashes already present (upgrading bare ones, see below).
+If several hash files are configured it writes to the first.
 
 Secrets shorter than 8 characters are accepted with a warning. Shorter than 4
 are refused unless you pass `--force`, because they occur in ordinary text and
 would wreck the output. `password-cleaner hash` takes the same input and flags
 but prints the line instead of saving it.
+
+### Environment variables
+
+Secrets often live in environment variables (`GITHUB_TOKEN`,
+`AWS_SECRET_ACCESS_KEY`, ...). A variable is treated as a secret if its
+**name** matches a pattern; only exported variables are visible to the program.
+Values are never printed.
+
+**While filtering**, `--env` uses the values of matching variables for that run
+only. Nothing is saved, and the hash file is optional:
+
+```sh
+password-cleaner --env --redact app.log
+```
+
+**To remember them**, import them into the hash file:
+
+```sh
+password-cleaner env list      # what matches, and what is already in the hash file
+password-cleaner env add       # asks about each new one
+password-cleaner env add GITHUB_TOKEN OPENAI_KEY   # just these, whatever they are called
+```
+
+`env list` shows names, lengths and a status, for example:
+
+```
+NAME                   LENGTH  STATUS
+AWS_SECRET_ACCESS_KEY  40      in hash file
+GITHUB_TOKEN           40      new
+OLD_SECRET             17      bare hash, add will upgrade it
+```
+
+`env add` asks `Add GITHUB_TOKEN (40 characters)? [y/N/a/q]`: `y` adds it, `n`
+(the default) skips it, `a` adds it and everything after it, and `q` stops
+asking (earlier yeses are still added). Nothing is written until all questions
+are answered. It never asks about a value that is already in any of the hash
+files, whatever the variable is called; a value stored only as a bare hash is
+upgraded to include its length, without asking. Variables with the same value
+are asked about once. New lines are commented with the variable name and the
+date (`GITHUB_TOKEN, added 2026-10-25`) and written to the first hash file.
+`--yes` skips the questions, and is required when there is no terminal;
+`--dry-run` shows what would be asked and writes nothing.
+
+Values that are empty, shorter than 4 characters, or span several lines are
+skipped, as is anything named `PASSWORD_CLEANER_*`.
+
+**Which names match.** The two uses have different default patterns (matching
+ignores case; `*` matches any run of characters):
+
+| Used by | Default patterns |
+| --- | --- |
+| `env list`, `env add`: broad, because you confirm each one | `*TOKEN*` `*SECRET*` `*PASSWORD*` `*PASSWD*` `*PASS*` `*KEY*` `*CREDENTIAL*` `*CRED*` `*AUTH*` `*PRIVATE*` `*API*` `*DSN*` `*_PAT` |
+| `--env`: narrow, because nothing asks first | `*TOKEN*` `*SECRET*` `*PASSWORD*` `*PASSWD*` `*_KEY` `*_API_KEY*` `*PRIVATE_KEY*` `*CREDENTIAL*` |
+
+The narrow list catches `OPENAI_KEY` but not `KEYTIMEOUT`, `GPG_KEY_ID` or
+`SSH_AUTH_SOCK`, so filtering doesn't remove good lines. `env list --narrow`
+shows what `--env` would use.
+
+Change the patterns with `--env-var GLOB` (repeatable; replaces the defaults)
+and `--env-exclude GLOB` (repeatable), or for every run with
+`$PASSWORD_CLEANER_ENV_VARS` and `$PASSWORD_CLEANER_ENV_EXCLUDE`
+(comma-separated). Flags win over the environment variables.
 
 ### Upgrading from 0.0.x
 

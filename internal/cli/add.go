@@ -80,26 +80,24 @@ func (a *app) runAdd(*cobra.Command, []string) error {
 	if err != nil {
 		return err
 	}
-	if len(paths) != 1 {
-		return fmt.Errorf("$%s lists %d files; choose one with --hash-file", hashes.EnvVar, len(paths))
-	}
+	target := paths[0] // when $PASSWORD_CLEANER_HASH_FILE lists several, the first
 
 	entries, err := a.readEntries(a.add.secretFlags)
 	if err != nil {
 		return err
 	}
-	res, err := hashes.Append(paths[0], entries, a.add.comment != "")
+	res, err := hashes.Append(target, entries, a.add.comment != "")
 	if err != nil {
 		return err
 	}
 	var msg string
 	switch {
 	case res.Added > 0 && res.Upgraded > 0:
-		msg = fmt.Sprintf("added %d hash(es) to %s, upgraded %d to include the length", res.Added, paths[0], res.Upgraded)
+		msg = fmt.Sprintf("added %d hash(es) to %s, upgraded %d to include the length", res.Added, target, res.Upgraded)
 	case res.Upgraded > 0:
-		msg = fmt.Sprintf("upgraded %d hash(es) in %s to include the length", res.Upgraded, paths[0])
+		msg = fmt.Sprintf("upgraded %d hash(es) in %s to include the length", res.Upgraded, target)
 	default:
-		msg = fmt.Sprintf("added %d hash(es) to %s", res.Added, paths[0])
+		msg = fmt.Sprintf("added %d hash(es) to %s", res.Added, target)
 	}
 	if res.Skipped > 0 {
 		msg += fmt.Sprintf(" (%d already present)", res.Skipped)

@@ -183,6 +183,16 @@ func (s *Set) Contains(sum Sum) bool {
 	return false
 }
 
+// ContainsTagged reports whether sum is in the set as a length-tagged hash.
+func (s *Set) ContainsTagged(sum Sum) bool {
+	for _, m := range s.tagged {
+		if _, ok := m[sum]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadFile adds every entry in the file at path to s and returns how many it
 // read. Malformed lines are skipped and reported to warn (which may be nil)
 // as "path:line: reason".

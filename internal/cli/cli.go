@@ -42,12 +42,16 @@ type app struct {
 	// line from the terminal without echoing it. Tests replace both.
 	isTTY  func(r io.Reader) bool
 	prompt func(label string) (string, error)
-	// now supplies the date written into comments.
-	now func() time.Time
+	// now supplies the date written into comments. environFn supplies the
+	// environment variables; nil means the real ones.
+	now       func() time.Time
+	environFn func() []string
 
-	filter filterFlags
-	add    addFlags
-	hash   secretFlags
+	filter  filterFlags
+	add     addFlags
+	hash    secretFlags
+	envList envListFlags
+	envAdd  envAddFlags
 }
 
 func newApp(stdin io.Reader, stdout, stderr io.Writer) *app {
@@ -75,7 +79,10 @@ line is hashed and looked up in it.
 
 The default hash file is password-cleaner/hashes.txt in your config directory.
 Use --hash-file (repeatable) or $PASSWORD_CLEANER_HASH_FILE to use others.
-Add secrets to it with "password-cleaner add".
+Add secrets to it with "password-cleaner add", or import them from your
+environment variables with "password-cleaner env add". With --env, secrets in
+environment variables (TOKEN, SECRET, PASSWORD and similar) are used for the
+run without being stored.
 
 Exit status: 0 on success, 1 if --check found a secret, 2 on any error.`
 
@@ -88,8 +95,14 @@ const rootExample = `  # Drop every line that contains a known secret
   # Fail a CI job or pre-commit hook if a file contains a secret
   password-cleaner --check config.yaml
 
+  # Also treat secrets in environment variables as secrets, without saving them
+  password-cleaner --env --redact app.log
+
   # Remember a new secret (prompts without echoing it)
-  password-cleaner add`
+  password-cleaner add
+
+  # Pick secrets out of your environment to remember, confirming each one
+  password-cleaner env add`
 
 func newRoot(a *app, info BuildInfo) *cobra.Command {
 	root := &cobra.Command{
@@ -110,7 +123,7 @@ func newRoot(a *app, info BuildInfo) *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	a.filter.register(root)
-	root.AddCommand(a.addCmd(), a.hashCmd())
+	root.AddCommand(a.addCmd(), a.hashCmd(), a.envCmd())
 	return root
 }
 
