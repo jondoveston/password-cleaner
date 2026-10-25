@@ -53,16 +53,16 @@
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
               ./go.mod
+              ./go.sum
               (pkgs.lib.fileset.fileFilter (file: file.hasExt "go") ./.)
             ];
           };
 
-          # There are no dependencies outside the standard library, so there
-          # is nothing to vendor. Once a dependency is added (and go.sum
-          # exists), `task nix:vendor-hash` computes the real hash and
-          # replaces this line; it must be refreshed whenever go.mod/go.sum
-          # change.
-          vendorHash = null;
+          # `nix build` fails on the first run with a "hash mismatch" error
+          # reporting the correct value under "got:" -- `task nix:vendor-hash`
+          # does that and updates this line. Must be refreshed whenever
+          # go.mod/go.sum change.
+          vendorHash = "sha256-clJqc5E8L4sv9eujlTxYVSZXE/Twr8WcroYVFWaT+as=";
 
           subPackages = [ "." ];
 

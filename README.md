@@ -1,16 +1,14 @@
 # password-cleaner
 
-Filter stdin, dropping any line that contains a secret. Secrets are never
-stored in the clear: you keep a file of SHA-256 hashes, and every substring of
-each input line (of at least `--min-length` characters) is hashed and compared
-against it.
-
-Lines that are clean go to stdout. Lines that contain a known secret go to
-stderr, so you can see what was removed.
+Remove lines containing secrets from text. Secrets are never stored in the
+clear: you keep a file of their SHA-256 hashes, and every substring of each
+input line is hashed and looked up in it.
 
 ```console
-$ password-cleaner "my-secret-password" >> ~/.config/password-cleaner/hashes.txt
-$ cat shell-history.txt | password-cleaner > cleaned.txt
+$ password-cleaner add                      # prompts, without echo
+$ cat shell-history | password-cleaner > cleaned
+$ password-cleaner --redact app.log         # keep the lines, blank the secrets
+$ password-cleaner --check config.yaml      # exit 1 if it contains a secret
 ```
 
 ## Install
@@ -54,20 +52,89 @@ brew install jondoveston/tap/password-cleaner
 ## Usage
 
 ```
-password-cleaner [flags] [password]
+password-cleaner [flags] [file...]   filter files, or stdin if none (or "-")
+password-cleaner add [flags]         add secrets to the hash file
+password-cleaner hash [flags]        print the hash-file line for a secret
 ```
 
-| Flag                | What it does                                                  |
-| ------------------- | ------------------------------------------------------------- |
-| `--hash-file PATH`  | file of SHA-256 hashes, one per line (`#` starts a comment)    |
-| `--min-length N`    | shortest substring to check (default 8)                       |
-| `--version`         | print version, commit and build date                          |
+Run any command with `--help` for the full text.
 
-With a `password` argument it prints that password's SHA-256 hash, ready to
-append to the hash file. Without one it filters stdin.
+### Filtering
 
-The default hash file is `password-cleaner/hashes.txt` in your config
-directory (`$XDG_CONFIG_HOME`, or `~/.config` on macOS if it exists).
+By default a line containing a secret is **dropped**. Lines keep their
+original endings (LF or CRLF), and there is no limit on line length.
+
+| Flag                  | What it does                                                        |
+| --------------------- | ------------------------------------------------------------------- |
+| `-f, --hash-file F`   | hash file to use; repeat for several                                |
+| `--on-match MODE`     | `drop` (default), `redact`, or `stderr`                             |
+| `-r, --redact`        | same as `--on-match redact`                                         |
+| `--replacement TEXT`  | what `--redact` writes instead of a secret (default `[REDACTED]`)   |
+| `-c, --check`         | print `FILE:LINE` for each match, filter nothing                    |
+| `--min-length N`      | shortest substring tried for bare hashes (default 8)                |
+| `-v, --verbose`       | say which hash files were used and how many lines were removed      |
+
+`--on-match stderr` writes the **whole line, secret included,** to standard
+error. It is there for compatibility with earlier versions; the other modes
+never print a secret anywhere.
+
+`--check` never prints line content, only `<file>:<line>` (`<stdin>` for
+standard input), which makes it safe in CI logs and pre-commit hooks. With no
+hashes loaded it fails rather than report that everything is clean.
+
+**Exit status:** 0 on success, 1 if `--check` found a secret, 2 on any error.
+
+### Hash files
+
+The hash file is chosen from, in order: `--hash-file`,
+`$PASSWORD_CLEANER_HASH_FILE` (several files separated like `$PATH`), then
+`password-cleaner/hashes.txt` in `$XDG_CONFIG_HOME`, or your config directory
+(on macOS `~/.config` if it exists, otherwise `~/Library/Application Support`).
+
+```
+# comments and blank lines are ignored
+8:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8  # label
+5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
+```
+
+The number before the colon is the secret's length in bytes. With it, only
+substrings of the lengths present in the file are hashed, which is dramatically
+faster than trying every length (about 60 times on a typical log line). The
+cost is that anyone who reads the file learns each secret's length. Lines
+without a length still work, but force every substring of at least
+`--min-length` bytes to be tried, so a bare hash of a secret shorter than that
+is never found.
+
+Malformed lines are skipped with a warning naming the file and line number.
+The warning never repeats the line.
+
+### Adding secrets
+
+```sh
+password-cleaner add                      # on a terminal: asked twice, no echo
+pass show example.com | head -n1 | password-cleaner add --comment example.com
+```
+
+When standard input is not a terminal, each non-empty line is a secret. They
+are deliberately not accepted as arguments, so they never reach your shell
+history or the process list. `add` creates the file with mode 0600 (and its
+directory with 0700) and skips hashes already present (upgrading bare ones, see below).
+
+Secrets shorter than 8 characters are accepted with a warning. Shorter than 4
+are refused unless you pass `--force`, because they occur in ordinary text and
+would wreck the output. `password-cleaner hash` takes the same input and flags
+but prints the line instead of saving it.
+
+### Upgrading from 0.0.x
+
+Earlier versions took the secret as an argument (`password-cleaner "secret"`)
+and wrote matching lines to stderr. Now: use `add` or `hash` instead, and
+`--on-match stderr` for the old behaviour. Existing hash files keep working as
+they are. To get length-tagged lines and the faster matching, run `add` again
+with the same secrets: a bare hash that is already in the file is rewritten
+in place to include the length (keeping its label, unless you give a new
+`--comment`), and everything else in the file is left alone. Secrets that are
+not in the file yet are added as usual.
 
 ## Development
 
@@ -98,9 +165,8 @@ task nix:check     # nix flake check
 ```
 
 Nix only sees files tracked by git, so `git add` new files before building.
-There are no dependencies outside the standard library, so `vendorHash` in
-`flake.nix` is `null`. If you add one, run `task nix:vendor-hash` to compute it
-(and again whenever `go.mod`/`go.sum` change).
+After changing `go.mod`/`go.sum`, run `task nix:vendor-hash` to refresh
+`vendorHash` in `flake.nix`.
 
 ### Releasing
 
