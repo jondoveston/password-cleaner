@@ -1,3 +1,12 @@
-password-cleaner
+# build output
+/password-cleaner
+/dist/
+/result
+/result-*
+coverage.out
+
+# go-task's up-to-date checks
+/.task/
+
+# personal hashes
 hashes.txt
-.task

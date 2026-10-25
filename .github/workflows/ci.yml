@@ -1,79 +1,26 @@
-name: CI
+name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    name: Test
+  check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
         with:
-          go-version: '1.26.x'
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      # Runs the tests, and proves every release target builds and the
+      # Homebrew formula generates.
+      - name: nix flake check
+        run: nix flake check -L
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Display coverage
-        run: go tool cover -func=coverage.out
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.x'
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.11.4
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.x'
-
-      - name: Build binary
-        run: |
-          go build \
-            -ldflags="-s -w \
-              -X main.version=dev \
-              -X main.commit=$(git rev-parse --short HEAD) \
-              -X main.date=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
-              -X main.builtBy=github-actions" \
-            -o password-cleaner \
-            .
-
-      - name: Verify binary
-        run: |
-          chmod +x password-cleaner
-          ./password-cleaner --version
+      - name: Format, vet and lint
+        run: nix develop --command task fmt:check vet lint

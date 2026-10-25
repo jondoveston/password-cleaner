@@ -4,65 +4,159 @@ version: "3"
 
 vars:
   APP: password-cleaner
-  VERSION: "dev"
-  COMMIT: "commit"
-  # sh: "git rev-parse HEAD"
+  INSTALL_DIR: "{{.HOME}}/.local/bin"
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo none
   DATE:
-    sh: 'date -u +"%Y-%m-%dT%H:%M:%SZ"'
-  BUILT_BY:
-    sh: "whoami"
-
-env:
-  VERSION: "{{ .VERSION }}"
-  COMMIT: "{{ .COMMIT }}"
-  DATE: "{{ .DATE }}"
-  BUILT_BY: "{{ .BUILT_BY }}"
-  IMAGE: "{{ .APP }}"
-  TAG: "{{ .VERSION }}"
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  LDFLAGS: >-
+    -s -w
+    -X 'main.version={{.VERSION}}'
+    -X 'main.commit={{.COMMIT}}'
+    -X 'main.date={{.DATE}}'
 
 tasks:
   default:
-    desc: Build the tool
     cmds:
       - task: build
 
   build:
-    desc: Build the tool
-    cmd: |
-      go build \
-        -ldflags=" \
-        -s -w \
-        -X main.version=$VERSION \
-        -X main.commit=$COMMIT \
-        -X main.date=$DATE \
-        -X main.builtBy=$BUILT_BY \
-        " -v -o {{ .APP }} .
+    desc: Build the {{.APP}} binary
     sources:
-      - ./**/*.go
-      - ./go.mod
-      - ./go.sum
+      - "**/*.go"
+      - go.mod
+      - go.sum
     generates:
-      - ./{{ .APP }}
-
-  install:
-    desc: Install the tool to ~/.local/bin
-    deps: [build]
+      - "{{.APP}}"
     cmds:
-      - cp ./{{ .APP }} ~/.local/bin
-      - "chmod +x ~/.local/bin/{{ .APP }}"
+      - go build -ldflags="{{.LDFLAGS}}" -o {{.APP}} .
 
-  clean:
-    desc: Clean up the build
-    cmd: rm -f {{ .APP }}
+  run:
+    desc: Run without building a binary (pass args with -- after `task run --`)
+    cmds:
+      - go run -ldflags="{{.LDFLAGS}}" . {{.CLI_ARGS}}
 
-  fmt:
-    desc: Run go format
-    cmd: gofmt -s -w .
+  test:
+    desc: Run tests with coverage
+    cmds:
+      - go test ./... -race -cover
 
   lint:
     desc: Run golangci-lint
-    cmd: golangci-lint run
+    cmds:
+      - golangci-lint run ./...
 
-  test:
-    desc: Run the go tests
-    cmd: go test
+  fmt:
+    desc: Format all Go source
+    cmds:
+      - gofmt -s -w .
+
+  fmt:check:
+    desc: Fail if any Go source is not gofmt-formatted
+    cmds:
+      - |
+        unformatted="$(gofmt -s -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "not formatted:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+
+  tidy:
+    desc: Tidy go.mod / go.sum
+    cmds:
+      - go mod tidy
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: Everything CI checks locally (format, vet, test, lint)
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: test
+      - task: lint
+
+  clean:
+    desc: Remove build artefacts
+    cmds:
+      - rm -f {{.APP}} coverage.out
+      - rm -rf dist result result-*
+
+  install:
+    desc: Build and install {{.APP}} into {{.INSTALL_DIR}}
+    deps: [build]
+    cmds:
+      - mkdir -p "{{.INSTALL_DIR}}"
+      - cp ./{{.APP}} "{{.INSTALL_DIR}}/{{.APP}}"
+      - chmod +x "{{.INSTALL_DIR}}/{{.APP}}"
+
+  uninstall:
+    desc: Remove {{.APP}} from {{.INSTALL_DIR}}
+    cmds:
+      - rm -f "{{.INSTALL_DIR}}/{{.APP}}"
+
+  nix:build:
+    desc: Build the native package with Nix (runs the tests)
+    cmds:
+      - nix build .#default -L
+
+  nix:cross:
+    desc: Cross-compile every release target with Nix
+    cmds:
+      - nix build .#password-cleaner-x86_64-linux .#password-cleaner-aarch64-linux .#password-cleaner-aarch64-darwin --no-link --print-out-paths
+
+  nix:release:
+    desc: Build tarballs, SHA256SUMS and the Homebrew formula into ./result
+    cmds:
+      - nix build .#release -L
+      - ls -l result/
+
+  nix:check:
+    desc: Run nix flake check
+    cmds:
+      - nix flake check -L
+
+  nix:vendor-hash:
+    desc: Recompute vendorHash in flake.nix after go.mod or go.sum change
+    cmds:
+      - |
+        set -eu
+        if [ ! -f go.sum ]; then
+          echo "no go.sum: there are no dependencies, so vendorHash stays null"
+          exit 0
+        fi
+        fake="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        sed -i.bak -E "s#vendorHash = (null|\"[^\"]*\");#vendorHash = \"$fake\";#" flake.nix
+        rm -f flake.nix.bak
+        out="$(nix build .#default --no-link 2>&1 || true)"
+        hash="$(printf '%s\n' "$out" | sed -n 's/.*got: *\(sha256-[A-Za-z0-9+\/]*=*\).*/\1/p' | head -n 1)"
+        if [ -z "$hash" ]; then
+          printf '%s\n' "$out" >&2
+          echo "could not find the new vendorHash in the nix output" >&2
+          exit 1
+        fi
+        sed -i.bak -E "s|vendorHash = \"[^\"]*\";|vendorHash = \"$hash\";|" flake.nix
+        rm -f flake.nix.bak
+        echo "vendorHash = $hash"
+
+  release:tag:
+    desc: Tag v$(cat VERSION) and push it, which triggers the release workflow
+    preconditions:
+      - sh: test -z "$(git status --porcelain)"
+        msg: the working tree is not clean; commit or stash first
+    cmds:
+      - |
+        set -eu
+        tag="v$(tr -d '[:space:]' < VERSION)"
+        if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+          echo "$tag already exists; bump VERSION first" >&2
+          exit 1
+        fi
+        git tag -a "$tag" -m "{{.APP}} $tag"
+        git push origin "$tag"

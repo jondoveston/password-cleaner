@@ -1,3 +1,4 @@
+// Command password-cleaner filters stdin, dropping lines that contain secrets.
 package main
 
 import (
@@ -12,11 +13,11 @@ import (
 	"strings"
 )
 
+// Set at build time with -ldflags "-X main.version=...".
 var (
-	version = "0.0.1"
-	commit  = "HEAD"
-	date    = "now"
-	builtBy = "dev"
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 var (
@@ -54,7 +55,6 @@ func main() {
 		fmt.Printf("version: %s\n", version)
 		fmt.Printf("commit: %s\n", commit)
 		fmt.Printf("date: %s\n", date)
-		fmt.Printf("builtBy: %s\n", builtBy)
 		return
 	}
 
